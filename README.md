@@ -1,5 +1,3 @@
-# lvg-case-study.github.io
-
 # Detection and Tracking of A Football
 
 ## Project Summary
