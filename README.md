@@ -1,45 +1,143 @@
-# Detection and Tracking of A Football
 
-## Project Summary
+# Data Preparation & Modeling Approach
 
-We study the process of detection and tracking of a football in a series of images. Using image pre-processing techniques and image segmentation, an initial image is prepared in an HSV format and converted to a  binary image based on Hue thresholds that help identify the ball. Using Hough Transforms to find circles, the ball is detected in a specific region and highlighted. Utilising the initial reference point, subsequent sequence of images are passed through a similar process and the ball is searched for in a region around where the ball was detected in the previous image. One sample data source is used for our experiment, converting the video into its frames and performing ball detection on each frame. Centers of ball detected in each frame are plotted on the image in a series to highlight the path traversed by the ball. The final processed images are converted to a video for better visualisation. 
+I manually analysed all the files in Excel to see if I can find any patterns, any data consistency issues and ideas that may help me design the data model and the dashboard. Overall, I observed a lot of date conversions to be done, null exclusions, data de-duplication requirements. This step is important to ensure that a clean, stable and consistent data model is connected to the dashboard
 
-Note: This is a very basic implementation and we will highlight the considerations one must keep in mind to further refine the program and factor in aspects that pose a challenge to effective classification by reviewing some other methods for ball detection and tracking. 
+### Reviewing Source Files and Recording Observations
 
-## Data Source
+#### `Player.csv`
 
-For our Project, we will select a short clip of 5 to 10 seconds long of freely available footage created by people for our purposes where we can identify the football. 
+Table includes additional fields like `wantsBonus`, `wantsCommunication`, `wantsSMS`, and `welcomeOffer`. Although not relevant to my analysis right away, it would eb good to retain them for future applications.
 
-A video playing at 30 Frames per second would give us anywhere between 150 to 300 Images to work with (30 Frames per Second x 10 Seconds = 300 Images). We save each of these frames as separate images in order to process them one by one. Once the images are processed, we can stitch them all back together at a specified frame rate and play it as a video for better visualisation. 
+#### `PaymentTransaction.csv`
 
-**Name:** Group Of Boys Plays Soccer In A Soccer Field
+This table contains deposit and withdrawal activity. The transactions appear in multiple currencies, so exchange conversion should be done before loading to teh dashboard. As mentioned, `PENDINGWITHDRAWAL` and `CANCELWITHDRAWAL` will be excluded for the assignment.
 
-**Source (click on link):** <https://bit.ly/2WY09HH>
+#### `GameTransaction.csv`
 
-**Time Stamp:** 0:00 to 0:05
+This will become the main gameplay fact table and used for calculating most gaming KPIs. Upon inspection, I observed that a single `BetID` may appear in multiple rows, likely due to the way some bets are recorded. The table also contains mixed data-types for `BetID` values, and is missing some `ChannelUID` values.
 
-**Extracted Frames:** 160
+#### `Game.csv`, `GameProvider.csv`, `GameCategory.csv`
 
-**Planned Playback Frame Rate:** 20 FPS
-
-**Owner:** [Kelly Lacy](https://www.pexels.com/@kelly-lacy-1179532)
-
-The video can be downloaded from the source website specified above. Additionally, the MATLAB code does not include provisions for converting the Video into its respective frames, and converting the output frames into a video. These actions can be done using any free converter online/open-source software.
+These tables contain game metadata. Since they are all dimensional data, it would make sense to combine these into a single game dimension table. Upon review, blank rows were identified in `GameProvider.csv`, and duplicate rows were identified in `GameCategory.csv`.
 
 
-## Output Video
+### Data Cleaning and Preprocessing
 
-<span>We stitch all the images together in form of a video and render it as a video at 20 Frames per second. The output YouTube video can be viewed by clinking on the image thumbnail below:  </span>
-  
-[<img src="https://img.youtube.com/vi/QLIsoOHTw6A/maxresdefault.jpg" width="50%">](https://youtu.be/QLIsoOHTw6A)
+#### `Player.csv`
+
+-   Converted `RandomizedBirthDate` from numeric format into a valid date field.
+    
+
+#### `PaymentTransaction.csv`
+
+-   Converted `txDateTime` into a valid DateTime field.
+    
+-   Excluded rows where `txType` was `PENDINGWITHDRAWAL` or  `CANCELWITHDRAWAL`
+        
+-   Joined the table for exchange-rate conversion to EUR on Date + Currency Key.
+    
+
+#### `GameTransaction.csv`
+
+-   Removed rows where `BetID` was null.
+    
+-   Removed rows where `ChannelUID` was null.
+    
+-   Removed rows where both wager cash and wager bonus were zero. Assuming that a valid wager must contain some non-zero stake, whether cash or bonus component.
+
+    
+-   Joined the table for exchange-rate conversion to EUR on Date + Currency Key.
+    
+
+#### `GameProvider.csv`
+
+-   Removed blank rows.
+    
+
+#### `GameCategory.csv`
+
+-   Removed duplicate rows.
+    
+
+#### `Game.csv`
+
+-   Joined `GameCategory.csv` and `GameProvider.csv` tables to consolidate
+    
+![image.avif](https://user4551.na.imgto.link/public/20260314/image.avif)
+----------
+
+# Data ETL & Design Decisions
+
+### Building the ETL Dataflow
+
+I used KNIME, a free, open-source ETL and Business Intelligence tool to load the csv files and perform the cleaning, joins aggregations etc. I chose this over a locally hosted SQL Database because of my system OS Limitations and the flexibility that comes with using a tool like KNIME, where all operations are broken down into their individual steps - making it easier for me to make changes and regenerate multiple csv files instead of doing a manual export anytime I had to retrace my steps. KNIME combined some SQL-like operations and some operations I may have ended up doing in Python, making it a quicker and better choice for me to design in for this project.
+
+#### The KNIME ETL Model
+
+Below, you can see a screenshot of the ETL Model I built in KNIME to load all the 7 csv files, perform all operations and then export them into 4 csv files at the end.
+
+![workflow.svg](https://user4551.na.imgto.link/public/20260314/workflow.svg)
+
+#### Early currency standardization
+
+Both gameplay and payment data required currency conversion. To avoid repeating conversion logic later in the reporting layer, I standardised monetary values to EUR early in the ETL process. I joined the tables on a key of Date and Currency so that only the currency exchange rate relevant to the date on the transaction was considered.
+
+#### Bet-level consolidation in gameplay data
+
+In `GameTransaction.csv` it seemed that the same `BetID` could appeared across multiple result rows. To simplify calcualtions, wager and result activity was aggregated at `betID` level so that each bet could be represented by the same number of rows. Additionally, I also **pivoted** the wager and result data after aggregation and currency conversion. This was done so that **every row represented a unique `betID` in the table.** So now we had one row with w `betID` and columns for `wagerCash`, `wagerBonus`, `wagerDate` and similarly `resultCash`, `resultBonus`, `resultDate`.
+
+#### Enriched game dimension table
+
+Instead of keeping game, category, and provider data separate in Tableau, `Game.csv`, `GameProvider.csv`, and `GameCategory.csv` were combined into a single game dimension table. 
+
+### Other Design  Decisions
+
+#### Pre-Caluclating some KPIs
+Some KPIs were calculated in the ETL Stage before loading to Tableau itself,  such as:
+- Cash turnover = Wagered amount in cash
+- Bonus turnover = Wagered amount in bonus
+-  Cash winnings = Result amount in cash
+-  Bonus winnings = Result amount in bonus
+-  Turnover = Cash turnover + Bonus turnover
+-  Winnings = Cash winnings + Bonus winnings
+-  Cash result = Cash turnover - Cash winnings
+-  Bonus result = Bonus turnover - Bonus winnings
+-  Gross result = Turnover - Winnings
+-  Deposit
+-  Withdrawal
+-  Net deposit = Deposit – Withdrawal
+
+#### `BetID` treated as a string
+
+`BetID` was treated as a string rather than a numeric field because several valid records contained non-numeric or mixed-format values. These records were retained rather than discarded.
+
+#### Timestamp handling for aggregated bets
+
+Where multiple rows existed for the same `BetID`, the maximum timestamp was taken as the final timestamp for those related rows.
 
 
-Link : <https://youtu.be/QLIsoOHTw6A>
+# Data Model for Tableau
 
-## Drawbacks of Current Implementation
+This resulted in the following data model : 
 
-1.  Ball occlusion by other moving objects and players
-2.  High speed motion of the ball making it appear blurry and a long line
-3.  Due to the movement of camera, the size of the ball may vary which would effect the accuracy of detection due to changing perspective as it potentially changes color, shape, size properties
-4.  Varying external factors such as shadows, light intensity etc. in the video
+![image.avif](https://user4551.na.imgto.link/public/20260314/image-1.avif)
 
+Which looks like this in Tableau:
+
+![image.avif](https://user4551.na.imgto.link/public/20260314/image-2.avif)
+
+-   **fact_Game**: bet-level KPIs such as turnover, winnings, and gross result standardized to EUR
+    
+-   **fact_payment**: deposit and withdrawal activity standardized to EUR
+    
+-   **dim_player**: player attributes such as country, birth date, and status
+    
+-   **dim_game**: game metadata including game name, provider, and category
+    
+
+This structure made it easier to build dashboards that could answer business questions from both a player perspective and a game-performance perspective, while keeping the Tableau model clean and easy to understand.
+
+----------
+
+----------
