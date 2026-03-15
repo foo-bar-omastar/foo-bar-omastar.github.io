@@ -156,6 +156,7 @@ Although statically standardizing the currency worked for this project, it could
 Across the stages of development, there were challenges of varying degrees of difficulty. Highlighting some of them below:
 
  - Coming up with thresholds and scoring/ranking methods to identify valuable players using a combination of different metrics. With additional context and data, this could have been an easier problem to tackle.
+ - Working with rankings that are context and visual dependednt so they keep chaging on using filters. 
  - Handling multiple data integrity issues especially with number formats and dates. A lot of edge cases in game transaction table. Interesting challenge to take a call on how to handle them
  - Limited dataset size : Restricted the kind of KPIs I had to work with
 	 - Day-on-day or week-on-week calculations not possible due to 1-day data available
